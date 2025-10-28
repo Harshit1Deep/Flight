@@ -1,0 +1,216 @@
+
+class Rules(APIView):
+    def post(self, request):
+        data = request.data
+        try:
+            rule_data = data.get("rulemaster",{})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            rulemaster = AutoAllocationRuleMaster.objects.create(
+                rule_name=rule_data.get('rule_name'),
+                applies_to=rule_data.get('applies_to'),
+                trigger_type=rule_data.get('trigger_type'),
+                task_code=rule_data.get('task_code'),
+                action_type=rule_data.get('action_type'),
+                start_date=rule_data.get('start_date'),
+                end_date=rule_data.get('end_date'),
+                created_by=rule_data.get('created_by'),
+                department_id=rule_data.get('department_id'),
+                priority=rule_data.get('priority', 1)
+            )
+
+            for condition_data in condition_list:
+                AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+
+            for action_data in action_list:
+                AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+            return Response({
+                "message": "rule, conditions, and actions created"
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    def patch(self, request):
+        data = request.data
+        try:
+            rule_data = data.get('rulemaster', {})
+            condition_data = data.get('condition', {})
+            action_data = data.get('action', {})
+
+            # Fetch Rule Master
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+
+            # Update RuleMaster fields
+            rulemaster.rule_name = rule_data.get('rule_name', rulemaster.rule_name)
+            rulemaster.applies_to = rule_data.get('applies_to', rulemaster.applies_to)
+            rulemaster.trigger_type = rule_data.get('trigger_type', rulemaster.trigger_type)
+            rulemaster.task_code = rule_data.get('task_code', rulemaster.task_code)
+            rulemaster.action_type = rule_data.get('action_type', rulemaster.action_type)
+            rulemaster.start_date = rule_data.get('start_date', rulemaster.start_date)
+            rulemaster.end_date = rule_data.get('end_date', rulemaster.end_date)
+            rulemaster.created_by = rule_data.get('created_by', rulemaster.created_by)
+            rulemaster.updated_by = rule_data.get('updated_by', rulemaster.updated_by)
+            rulemaster.department_id = rule_data.get('department_id', rulemaster.department_id)
+            rulemaster.priority = rule_data.get('priority', rulemaster.priority)
+            rulemaster.save()
+
+            # Update existing condition
+            condition = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster).first()
+            if condition:
+                condition.group_id = condition_data.get('group_id', condition.group_id)
+                condition.parameter = condition_data.get('parameter', condition.parameter)
+                condition.operator = condition_data.get('operator', condition.operator)
+                condition.value = condition_data.get('value', condition.value)
+                condition.logical_operator = condition_data.get('logical_operator', condition.logical_operator)
+                condition.save()
+
+            # Update existing action
+            action = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster).first()
+            if action:
+                action.action_param = action_data.get('action_param', action.action_param)
+                action.updated_by = action_data.get('updated_by', action.updated_by)
+                action.value = action_data.get('value', action.value)
+                action.save()
+
+            return Response({
+                "message": "rulemaster, condition, and action updated successfully"
+            }, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request):
+        rule_id = request.query_params.get('rule_id')
+        try:
+            # Fetch Rule Master
+            if rule_id:
+                rulemasters = AutoAllocationRuleMaster.objects.filter(rule_id=rule_id)
+            else:
+                rulemasters = AutoAllocationRuleMaster.objects.all()
+
+            result =[]
+            for rulemaster in rulemasters:
+                rule_data = {
+                    "rule_id": rulemaster.rule_id,
+                    "rule_name": rulemaster.rule_name,
+                    "applies_to": rulemaster.applies_to,
+                    "trigger_type": rulemaster.trigger_type,
+                    "task_code": rulemaster.task_code,
+                    "action_type": rulemaster.action_type,
+                    "start_date": rulemaster.start_date,
+                    "end_date": rulemaster.end_date,
+                    "created_by": rulemaster.created_by,
+                    "updated_by": rulemaster.updated_by,
+                    "department_id": rulemaster.department_id,
+                    "priority": rulemaster.priority
+                }
+
+                conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+                condition_data = [{
+                    "group_id": condition.group_id,
+                    "parameter": condition.parameter,
+                    "operator": condition.operator,
+                    "value": condition.value,
+                    "logical_operator": condition.logical_operator
+                } for condition in conditions]
+
+                actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+                action_data = [{
+                    "action_param": action.action_param,
+                    "created_by": action.created_by,
+                    "updated_by": getattr(action, 'updated_by', None),
+                    "value": action.value
+                } for action in actions]
+
+                result.append({
+                    "rulemaster": rule_data,
+                    "conditions": condition_data,
+                    "actions": action_data
+                 })
+            return Response(result, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+patch 
+{
+  "rulemaster": {
+    "rule_id": 67,
+    "rule_name": "Updated Rule",
+    "applies_to": "Order",
+    "trigger_type": "OnUpdate",
+    "task_code": "ORD002",
+    "action_type": "Notify",
+    "start_date": "2025-11-01",
+    "end_date": "2025-12-31",
+    "created_by": "admin",
+    "updated_by": "admin",
+    "department_id": 5,
+    "priority": 2
+  },
+  "condition": {
+    "group_id": 1,
+    "parameter": "status",
+    "operator": "==",
+    "value": "pending",
+    "logical_operator": "AND"
+  },
+  "action": {
+    "action_param": "send_email",
+    "value": "team_lead@example.com",
+    "created_by": "admin",
+    "updated_by": "admin"
+  }
+}
+
+post 
+
+{
+  "rulemaster": {
+    "rule_name": "High Priority Orders",
+    "applies_to": "Order",
+    "trigger_type": "OnCreate",
+    "task_code": "ORD001",
+    "action_type": "Assign",
+    "start_date": "2025-10-28",
+    "end_date": "2025-12-31",
+    "created_by": "admin",
+    "department_id": 34,
+    "priority": 2
+  },
+  "condition": [
+    {
+      "group_id": 1,
+      "parameter": "priority",
+      "operator": "==",
+      "value": "high",
+      "logical_operator": "AND"
+    }
+  ],
+  "action": [
+    {
+      "action_param": "assign_to",
+      "created_by": "admin",
+      "value": "senior_agent"
+    }
+  ]
+}
