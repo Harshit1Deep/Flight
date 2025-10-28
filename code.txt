@@ -1,0 +1,160 @@
+http://127.0.0.1:8000/AutoAllocation/auto-allocation_rules/?rule_id=26
+http://127.0.0.1:8000/AutoAllocation/auto-allocation_rules/
+
+def get(self, request):
+    rule_id = request.query_params.get('rule_id')
+    try:
+        if rule_id:
+            rulemasters = AutoAllocationRuleMaster.objects.filter(rule_id=rule_id)
+        else:
+            rulemasters = AutoAllocationRuleMaster.objects.all()
+
+        result = []
+
+        for rulemaster in rulemasters:
+            rule_data = {
+                "rule_id": rulemaster.rule_id,
+                "rule_name": rulemaster.rule_name,
+                "applies_to": rulemaster.applies_to,
+                "trigger_type": rulemaster.trigger_type,
+                "task_code": rulemaster.task_code,
+                "action_type": rulemaster.action_type,
+                "priority": rulemaster.priority,
+                "is_active": rulemaster.is_active,
+                "start_date": rulemaster.start_date,
+                "end_date": rulemaster.end_date,
+                "updated_by": rulemaster.updated_by
+            }
+
+            conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+            condition_list = [{
+                "group_id": cond.group_id,
+                "parameter": cond.parameter,
+                "operator": cond.operator,
+                "value": cond.value,
+                "logical_operator": cond.logical_operator
+            } for cond in conditions]
+
+            actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+            action_list = [{
+                "action_param": act.action_param,
+                "created_by": act.created_by,
+                "value": act.value
+            } for act in actions]
+
+            result.append({
+                "rulemaster": rule_data,
+                "condition": condition_list,
+                "action": action_list
+            })
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+PATCH
+{
+  "rule_id": 26,
+  "condition": {  
+  "group_id": 1,
+  "parameter": "status",
+  "operator": "equals",
+  "value": "open",
+  "logical_operator": "AND"
+},
+  "action": {
+  "action_param": "assign_to",
+  "updated_by": "admin_user",
+  "value": "user123"
+}
+}
+
+ def patch(self, request):
+        data = request.data
+        try:
+            rule_id = data.get('rule_id')
+            condition_data = data.get('condition', {})
+            action_data = data.get('action', {})
+
+            # Fetch Rule Master
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            # Update existing condition
+            condition = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster).first()
+            if condition:
+                condition.group_id = condition_data.get('group_id', condition.group_id)
+                condition.parameter = condition_data.get('parameter', condition.parameter)
+                condition.operator = condition_data.get('operator', condition.operator)
+                condition.value = condition_data.get('value', condition.value)
+                condition.logical_operator = condition_data.get('logical_operator', condition.logical_operator)
+                condition.save()
+
+            # Update existing action
+            action = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster).first()
+            if action:
+                action.action_param = action_data.get('action_parameter', action.action_param)
+                action.updated_by = action_data.get('updated_by', action.updated_by)
+                action.value = action_data.get('value', action.value)
+                action.save()
+
+            return Response({
+                "message": "rule, condition, and action updated successfully"
+            }, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+POST
+
+class Rules(APIView):
+    def post(self, request):
+        data = request.data
+        try:
+            # Extract nested dictionaries
+            rule_id = data.get('rule_id')
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            # Create Conditions
+            for condition_data in condition_list:
+                AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+            # Create Actions
+            for action_data in action_list:
+                AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+            return Response({
+                "message": "rule, conditions, and actions created"
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+{
+   "rule_id":26,
+   "condition": [
+    {
+    "group_id": 1,
+    "parameter": "destination",
+    "operator": "in",
+    "value": ["PVG","CAN"],
+    "logical_operator":"OR"
+  }],
+   "action": [{
+    "action_param": "required_count",
+    "created_by":"admin",
+    "value": "1"
+  }]
+}
