@@ -1,0 +1,54 @@
+def get(self, request):
+    rule_id = request.query_params.get('rule_id')
+    try:
+        rulemasters = AutoAllocationRuleMaster.objects.prefetch_related('conditions', 'actions')
+        if rule_id:
+            rulemasters = rulemasters.filter(rule_id=rule_id)
+
+        result = []
+        for rulemaster in rulemasters:
+            rule_data = {
+                "rule_id": rulemaster.rule_id,
+                "rule_name": rulemaster.rule_name,
+                "applies_to": rulemaster.applies_to,
+                "trigger_type": rulemaster.trigger_type,
+                "task_code": rulemaster.task_code,
+                "action_type": rulemaster.action_type,
+                "start_date": rulemaster.start_date,
+                "end_date": rulemaster.end_date,
+                "created_by": rulemaster.created_by,
+                "updated_by": rulemaster.updated_by,
+                "department_id": rulemaster.department_id,
+                "priority": rulemaster.priority,
+                "conditions": [
+                    {
+                        "group_id": condition.group_id,
+                        "parameter": condition.parameter,
+                        "operator": condition.operator,
+                        "value": condition.value,
+                        "logical_operator": condition.logical_operator
+                    } for condition in rulemaster.conditions.all()
+                ],
+                "actions": [
+                    {
+                        "action_param": action.action_param,
+                        "created_by": action.created_by,
+                        "updated_by": getattr(action, 'updated_by', None),
+                        "value": action.value
+                    } for action in rulemaster.actions.all()
+                ]
+            }
+            result.append(rule_data)
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    except AutoAllocationRuleMaster.DoesNotExist:
+        return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+   

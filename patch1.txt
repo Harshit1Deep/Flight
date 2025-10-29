@@ -1,0 +1,41 @@
+
+
+        # Fetch Rule Master
+        rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+
+        # Update RuleMaster fields selectively
+        rulemaster_fields = [
+            'rule_name', 'applies_to', 'trigger_type', 'task_code',
+            'action_type', 'start_date', 'end_date', 'created_by',
+            'updated_by', 'department_id', 'priority'
+        ]
+        for field in rulemaster_fields:
+            if field in rule_data:
+                setattr(rulemaster, field, rule_data[field])
+        rulemaster.save()
+
+        # Update existing condition selectively
+        condition = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster).first()
+        if condition:
+            condition_fields = [
+                'group_id', 'parameter', 'operator',
+                'value', 'logical_operator'
+            ]
+            for field in condition_fields:
+                if field in condition_data:
+                    setattr(condition, field, condition_data[field])
+            condition.save()
+
+        # Update existing action selectively
+        action = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster).first()
+        if action:
+            action_fields = ['action_param', 'updated_by', 'value']
+            for field in action_fields:
+                if field in action_data:
+                    setattr(action, field, action_data[field])
+            action.save()
+
+    except AutoAllocationRuleMaster.DoesNotExist:
+        return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

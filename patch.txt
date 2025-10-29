@@ -96,14 +96,15 @@ class Rules(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def get(self, request):
+     def get(self, request):
         rule_id = request.query_params.get('rule_id')
         try:
-            # Fetch Rule Master
+            #prefetch
+            rulemasters = AutoAllocationRuleMaster.objects.prefetch_related('conditions', 'actions')
             if rule_id:
-                rulemasters = AutoAllocationRuleMaster.objects.filter(rule_id=rule_id)
-            else:
-                rulemasters = AutoAllocationRuleMaster.objects.all()
+                rulemasters = rulemasters.filter(rule_id=rule_id)
+            # else:
+            #     rulemasters = AutoAllocationRuleMaster.objects.all()
 
             result =[]
             for rulemaster in rulemasters:
@@ -122,22 +123,22 @@ class Rules(APIView):
                     "priority": rulemaster.priority
                 }
 
-                conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+                # conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
                 condition_data = [{
                     "group_id": condition.group_id,
                     "parameter": condition.parameter,
                     "operator": condition.operator,
                     "value": condition.value,
                     "logical_operator": condition.logical_operator
-                } for condition in conditions]
+                } for condition in rulemaster.conditions.all()]
 
-                actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+                # actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
                 action_data = [{
                     "action_param": action.action_param,
                     "created_by": action.created_by,
                     "updated_by": getattr(action, 'updated_by', None),
                     "value": action.value
-                } for action in actions]
+                } for action in rulemaster.actions.all()]
 
                 result.append({
                     "rulemaster": rule_data,

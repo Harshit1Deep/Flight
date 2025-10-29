@@ -1,0 +1,235 @@
+class Rules(APIView):
+    def post(self, request):
+        data = request.data
+        try:
+            rule_id = data.get('rule_id')
+            rule_data = data.get("rulemaster",{})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            if rule_id:
+                rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            else:
+                rulemaster = AutoAllocationRuleMaster.objects.create(
+                    rule_name=rule_data.get('rule_name'),
+                    applies_to=rule_data.get('applies_to'),
+                    trigger_type=rule_data.get('trigger_type'),
+                    task_code=rule_data.get('task_code'),
+                    action_type=rule_data.get('action_type'),
+                    start_date=rule_data.get('start_date'),
+                    end_date=rule_data.get('end_date'),
+                    created_by=rule_data.get('created_by'),
+                    department_id=rule_data.get('department_id'),
+                    priority=rule_data.get('priority', 1)
+                )
+
+            for condition_data in condition_list:
+                AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+
+            for action_data in action_list:
+                AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+            return Response({
+                "message": "rule, conditions, and actions created"
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    def patch(self, request):
+        data = request.data
+        try:
+            rule_data = data.get('rulemaster', {})
+            condition_data = data.get('condition', {})
+            action_data = data.get('action', {})
+
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+
+            with transaction.atomic():
+                # update rulemaster fields dynamically
+                for field, value in rule_data.items():
+                    if hasattr(rulemaster, field):
+                        setattr(rulemaster, field, value)
+                rulemaster.save()
+
+                # Update condition
+                condition_id = condition_data.get('condition_id')
+                if condition_id:
+                    condition = AutoAllocationRuleCondition.objects.get(id =condition_id ,rule_id=rulemaster)
+                    for field, value in condition_data.items():
+                        if field !="condition_id" and hasattr(condition, field):
+                            setattr(condition, field, value)
+                    condition.save()
+
+                # Update action
+                action_id = action_data.get('action_id')
+                if action_id:
+                    action = AutoAllocationRuleAction.objects.get(id=action_id,rule_id=rulemaster)
+                    for field, value in action_data.items():
+                        if field!="action_id" and hasattr(action, field):
+                            setattr(action, field, value)
+                    action.save()
+
+            return Response({
+                "message": "rulemaster, condition, and action updated"
+            }, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request):
+        rule_id = request.query_params.get('rule_id')
+        try:
+            #prefetch
+            rulemasters = AutoAllocationRuleMaster.objects.prefetch_related('conditions', 'actions')
+            if rule_id:
+                rulemasters = rulemasters.filter(rule_id=rule_id)
+            # else:
+            #     rulemasters = AutoAllocationRuleMaster.objects.all()
+            data_rows =[]
+            for rulemaster in rulemasters:
+                rule_data = {
+                    "rule_id": rulemaster.rule_id,
+                    "rule_name": rulemaster.rule_name,
+                    "applies_to": rulemaster.applies_to,
+                    "trigger_type": rulemaster.trigger_type,
+                    "task_code": rulemaster.task_code,
+                    "action_type": rulemaster.action_type,
+                    "start_date": rulemaster.start_date,
+                    "end_date": rulemaster.end_date,
+                    "created_by": rulemaster.created_by,
+                    "updated_by": rulemaster.updated_by,
+                    "department_id": rulemaster.department_id,
+                    "priority": rulemaster.priority,
+                }
+                conditions_data = [
+                        {
+                            "group_id": condition.group_id,
+                            "parameter": condition.parameter,
+                            "operator": condition.operator,
+                            "value": condition.value,
+                            "logical_operator": condition.logical_operator
+                        } for condition in rulemaster.conditions.all()
+                ]
+                actions_data = [
+                        {
+                            "action_param": action.action_param,
+                            "created_by": action.created_by,
+                            "updated_by": getattr(action, 'updated_by', None),
+                            "value": action.value
+                        } for action in rulemaster.actions.all()
+                ]
+                data_rows.append([rule_data, conditions_data, actions_data])
+
+            result = {
+                "columns": ["Rulemaster", "Conditions", "Actions"],
+                "data": data_rows
+            }
+
+            return Response(result, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # condition_query = AutoAllocationRuleCondition.objects.all()
+            # action_query = AutoAllocationRuleAction.objects.all()
+                # Prefetch('autoallocationrulecondition_set',queryset=condition_query),
+                # Prefetch('autoallocationruleaction_set',queryset=action_query)
+            # Fetch Rule Master
+                ## conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+                # # actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+                # condition_data = [{
+                #     "group_id": condition.group_id,
+                #     "parameter": condition.parameter,
+                #     "operator": condition.operator,
+                #     "value": condition.value,
+                #     "logical_operator": condition.logical_operator
+                # } for condition in rulemaster.conditions.all()]
+                #
+                # action_data = [{
+                #     "action_param": action.action_param,
+                #     "created_by": action.created_by,
+                #     "updated_by": getattr(action, 'updated_by', None),
+                #     "value": action.value
+                # } for action in rulemaster.actions.all()]
+                #
+                #
+                # result.append({
+                #     "rulemaster": rule_data,
+                #     "conditions": condition_data,
+                #     "actions": action_data
+                #  })
+
+    def delete(self, request):
+        rule_id = request.query_params.get('rule_id')
+        condition_id = request.query_params.get('condition_id')
+        action_id = request.query_params.get('action_id')
+
+        try:
+            # Delete specific condition
+            if condition_id:
+                condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rule_id)
+                condition.delete()
+                return Response({"message": "Condition deleted successfully"}, status=status.HTTP_200_OK)
+
+            # Delete specific action
+            if action_id:
+                action = AutoAllocationRuleAction.objects.get(id=action_id, rule_id=rule_id)
+                action.delete()
+                return Response({"message": "Action deleted successfully"}, status=status.HTTP_200_OK)
+
+            # Delete entire rulemaster with its conditions and actions
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            with transaction.atomic():
+                AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster).delete()
+                AutoAllocationRuleAction.objects.filter(rule_id=rulemaster).delete()
+                rulemaster.delete()
+
+            return Response({"message": "Rulemaster, conditions, and actions deleted successfully"},
+                                status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            return Response({"error": "Rulemaster not found"}, status=status.HTTP_404_NOT_FOUND)
+        except AutoAllocationRuleCondition.DoesNotExist:
+            return Response({"error": "Condition not found"}, status=status.HTTP_404_NOT_FOUND)
+        except AutoAllocationRuleAction.DoesNotExist:
+            return Response({"error": "Action not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # field = request.query_params.get('field')
+        # value = request.query_params.get('value')
+            # if condition_id and field:
+            #     condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rule_id)
+            #     if hasattr(condition, field) and getattr(condition, field) == value:
+            #         setattr(condition, field, None)  # or '' if it's a CharField
+            #         condition.save()
+            #         return Response({"message": f"field deleted"}, status=status.HTTP_200_OK)
+            #     else:
+            #         return Response({"error": f"field not found"},
+            #                         status=status.HTTP_404_NOT_FOUND)
+            #
+            # if action_id and field:
+            #     action = AutoAllocationRuleAction.objects.get(id=action_id, rule_id=rule_id)
+            #     if hasattr(action, field) and getattr(action, field) == value:
+            #         setattr(action, field, None)  # or '' if it's a CharField
+            #         action.save()
+            #         return Response({"message": f"field deleted"}, status=status.HTTP_200_OK)
+            #     else:
+            #         return Response({"error": f"field not found"},
+            #                         status=status.HTTP_404_NOT_FOUND)

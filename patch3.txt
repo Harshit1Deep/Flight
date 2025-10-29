@@ -1,0 +1,46 @@
+def patch(self, request):
+    data = request.data
+    try:
+        rule_data = data.get('rulemaster', {})
+        condition_data = data.get('condition', {})
+        action_data = data.get('action', {})
+
+        rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+
+        with transaction.atomic():
+            # Update rulemaster fields dynamically
+            for field, value in rule_data.items():
+                if hasattr(rulemaster, field):
+                    setattr(rulemaster, field, value)
+            rulemaster.save()
+
+            # Update specific condition if condition_id is provided
+            condition_id = condition_data.get('condition_id')
+            if condition_id:
+                condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rulemaster)
+                for field, value in condition_data.items():
+                    if field != 'condition_id' and hasattr(condition, field):
+                        setattr(condition, field, value)
+                condition.save()
+
+            # Update first action (or extend to use action_id if needed)
+            action_id = action_data.get('action_id')
+            if action_id:
+                action = AutoAllocationRuleAction.objects.get(id=action_id, rule_id=rulemaster)
+                for field, value in action_data.items():
+                    if field != 'action_id' and hasattr(action, field):
+                        setattr(action, field, value)
+                action.save()
+
+        return Response({
+            "message": "rulemaster, condition, and action updated successfully"
+        }, status=status.HTTP_200_OK)
+
+    except AutoAllocationRuleMaster.DoesNotExist:
+        return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+    except AutoAllocationRuleCondition.DoesNotExist:
+        return Response({"error": "Condition not found"}, status=status.HTTP_404_NOT_FOUND)
+    except AutoAllocationRuleAction.DoesNotExist:
+        return Response({"error": "Action not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
