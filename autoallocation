@@ -283,3 +283,146 @@ urlpatterns = [
     re_path(r'^system_update_allocation/?$', SystemUpdateAllocation.as_view()),
     re_path(r'^auto-allocation_rules/?$',Rules.as_view()),
 ]
+
+
+post 
+{
+  "rulemaster": {
+    "rule_name": "Boarding Agent",
+    "applies_to": "fixed",
+    "trigger_type": "FDOC",
+    "task_code": "FDOC",
+    "action_type": "create_task",
+    "start_date": "2024-11-28",
+    "end_date": "2025-12-10",
+    "created_by": "admin",
+    "priority": 1
+  },
+  "condition": [
+    {
+      "group_id": 1,
+      "parameter": "body_type",
+      "operator": "in",
+      "value": ["wide","narrow"],
+      "logical_operator": "AND"
+    },
+    {
+      "group_id": 1,
+      "parameter": "destination",
+      "operator": "in",
+      "value": ["PVG","CAN"],
+      "logical_operator": "AND"
+    },
+    {
+      "group_id": 1,
+      "parameter": "departure_time",
+      "operator": "between",
+      "value": ["20:00","23:00"],
+      "logical_operator": "AND"
+    }
+
+  ],
+  "action": [
+    {
+      "action_param": "required_count",
+      "created_by": "admin",
+      "value": 1
+    },
+    {
+      "action_param": "required_count",
+      "created_by": "admin",
+      "value": 1
+    },
+    {
+      "action_param": "passenger_based_allocation",
+      "created_by": "admin",
+      "value": {">=151": 2}
+    }
+  ]
+}
+
+post1
+{
+  "rule_id": 68,
+  "condition": [
+   { 
+    "group_id": 1,
+    "parameter": "destination",
+    "operator": "in",
+    "value": ["CAN"],
+    "logical_operator": "AND"
+}
+],
+"action": [
+    {
+        "action_param": "required_count",
+        "created_by": "admin",
+        "value": 1
+    }
+]
+
+}
+// {
+//     "date":"2025-10-14",
+//     "department_id":31,
+//     "department_name":"Departure Services"
+// }
+
+
+delete1
+
+{
+  "rule_id": 68,
+  "condition": [
+   { 
+    "group_id": 1,
+    "parameter": "body_type",
+    "operator": "in",
+    "value": ["wide","narrow"],
+    "logical_operator": "AND"
+}
+]
+}
+delete
+
+{
+  "rule_id": 71
+}
+
+get http://127.0.0.1:8000/AutoAllocation/auto-allocation_rules/
+
+patch 
+{
+  "rulemaster": {
+    "rule_id": 75
+  },
+  "condition": [ {
+    "condition_id":470,
+    "group_id": 1,
+    "parameter":"departure_time",  
+    "operator": "between",
+    "value": ["00:00","05:00"]
+  },
+  {
+    "condition_id":471,
+    "group_id": 1,
+    "parameter":"destination",  
+    "operator": "in",
+    "value": ["PVG","CAN"]
+  }
+  ],
+  "action": [{
+    "action_id":68,
+    "value": {">=151": 2}
+  },
+  {
+    "action_id": 69,
+    "value": 1
+  }
+  ]
+}
+
+
+session
+eyJraWQiOiJrbDR1Rm9UK2JmUDIwSDVMdkxOck5jTlFVTTJpQ1ZDTEJ3S2xFRFNsRzdBPSIsImFsZyI6IlJTMjU2In0.eyJzdWIiOiJjMzk0OTgxMi1iMDcxLTcwZmEtYTBmNy04ZjhiMzllMmI0YzkiLCJpc3MiOiJodHRwczpcL1wvY29nbml0by1pZHAuZXUtY2VudHJhbC0xLmFtYXpvbmF3cy5jb21cL2V1LWNlbnRyYWwtMV80QXZBclF3cVIiLCJjbGllbnRfaWQiOiIxcHIwdXF2aWNuYTl1YWoyOGMxbWtzYnExbSIsIm9yaWdpbl9qdGkiOiI3ZGQ1ZTJmMC01ZDg1LTQwZTgtODdkMi0xMTg3N2E1OTZmMTEiLCJldmVudF9pZCI6IjdiOGM5MzA1LTkxNDEtNDhkMi1iMTQ4LTIyMWZhYzllZGNhMyIsInRva2VuX3VzZSI6ImFjY2VzcyIsInNjb3BlIjoiYXdzLmNvZ25pdG8uc2lnbmluLnVzZXIuYWRtaW4iLCJhdXRoX3RpbWUiOjE3NTQwMjg0MjYsImV4cCI6MTc1NDAyODcyNiwiaWF0IjoxNzU0MDI4NDI2LCJqdGkiOiI4MWFjMzA5YS04ZTBiLTRiOTEtYWEzYy1lNzQwYzVhNThmZmUiLCJ1c2VybmFtZSI6ImV0LmRldiJ9.Uw4FCm5ul6zCLzSPoozgdA9qupI-PuItIt7zEe6t0WMEBYlC0AylJQxDHF8QTHtRVVv3bG7VTcKsIQvngGTMqdf6u169DpkDHF-pHCTUMls6N6l8iVLCt_JQGxSy2JZuSg91Jd4xYrJqMnn1OO9TcH5_cdFOMlfwpxVaTZin2ceCGYcvPdfPHkcujVZ-efr1xlYmG1ky3IfYJISKzbbvyG4QvZCQtsrMz6rPv2xI7t6RHURyj4vbb_O1Gv93kPqEK75uFc55fj8W3iLkbzuuOdFv-Ao2XzaVheRU2MIRBfJa1wIOwkJf3tWPtbD3IE3-I8BR-zrVZjtP9UZJx4F0zg
+ 
