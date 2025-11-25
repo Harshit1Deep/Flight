@@ -1,0 +1,273 @@
+import time
+import logging
+from rest_framework.response import Response
+from rest_framework import status
+
+logger = logging.getLogger(__name__)
+
+def post(self, request):
+    start_time = time.time()   # ⏱ log start
+    data = request.data
+    entity, airport = get_entity_airport(request)
+
+    try:
+        rule_id = data.get('rule_id')
+        rule_data = data.get("rulemaster", {})
+        condition_list = data.get('condition', [])
+        action_list = data.get('action', [])
+
+        if rule_id:
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            logger.info(f"[POST] Using existing rule {rule_id}")
+        else:
+            department_id = GroundSupportEquipmentTypes.objects.filter(
+                entity=entity,
+                airport=airport,
+                equipment_code=rule_data.get('task_code')
+            ).first().department_id
+
+            rulemaster = AutoAllocationRuleMaster.objects.create(
+                rule_name=rule_data.get('rule_name'),
+                applies_to=rule_data.get('applies_to'),
+                task_code=rule_data.get('task_code'),
+                action_type=rule_data.get('action_type'),
+                start_date=rule_data.get('start_date'),
+                end_date=rule_data.get('end_date'),
+                created_by=rule_data.get('created_by'),
+                is_active=True,
+                department_id=department_id,
+                priority=rule_data.get('priority', 1)
+            )
+            logger.info(f"[POST] Created new rule {rulemaster.rule_id} - {rulemaster.rule_name}")
+
+        created_condition = []
+        for condition_data in condition_list:
+            createcondition = AutoAllocationRuleCondition.objects.create(
+                rule_id=rulemaster,
+                group_id=condition_data.get('group_id', 1),
+                parameter=condition_data.get('parameter'),
+                operator=condition_data.get('operator'),
+                value=condition_data.get('value'),
+                logical_operator=condition_data.get('logical_operator')
+            )
+            created_condition.append(f"{createcondition.id} - {createcondition.parameter}")
+
+        created_action = []
+        for action_data in action_list:
+            createaction = AutoAllocationRuleAction.objects.create(
+                rule_id=rulemaster,
+                action_param=action_data.get('action_param'),
+                created_by=action_data.get('created_by'),
+                value=action_data.get('value', '')
+            )
+            created_action.append(f"{createaction.id} - {createaction.action_param}")
+
+        # ⏱ log end
+        duration = (time.time() - start_time) * 1000
+        logger.info(f"[POST] Rule {rulemaster.rule_id} processed in {duration:.2f} ms")
+
+        return Response({
+            "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                       f"conditions: {created_condition} and actions: {created_action} successfully."
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        duration = (time.time() - start_time) * 1000
+        logger.error(f"[POST] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+patch
+
+import time
+import logging
+from rest_framework.response import Response
+from rest_framework import status
+
+logger = logging.getLogger(__name__)
+
+def patch(self, request):
+    start_time = time.time()
+    data = request.data
+    try:
+        rule_id = data.get('rule_id')
+        rule_data = data.get("rulemaster", {})
+        condition_list = data.get('condition', [])
+        action_list = data.get('action', [])
+
+        rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+
+        # Update rulemaster fields
+        for field, value in rule_data.items():
+            setattr(rulemaster, field, value)
+        rulemaster.save()
+
+        # Update conditions
+        updated_conditions = []
+        for condition_data in condition_list:
+            condition = AutoAllocationRuleCondition.objects.get(id=condition_data.get('id'))
+            for field, value in condition_data.items():
+                if field != 'id':
+                    setattr(condition, field, value)
+            condition.save()
+            updated_conditions.append(f"{condition.id} - {condition.parameter}")
+
+        # Update actions
+        updated_actions = []
+        for action_data in action_list:
+            action = AutoAllocationRuleAction.objects.get(id=action_data.get('id'))
+            for field, value in action_data.items():
+                if field != 'id':
+                    setattr(action, field, value)
+            action.save()
+            updated_actions.append(f"{action.id} - {action.action_param}")
+
+        duration = (time.time() - start_time) * 1000
+        logger.info(f"[PATCH] Rule {rulemaster.rule_id} updated in {duration:.2f} ms")
+
+        return Response({
+            "message": f"Updated rule {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                       f"conditions: {updated_conditions}, actions: {updated_actions} successfully."
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        duration = (time.time() - start_time) * 1000
+        logger.error(f"[PATCH] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+delete 
+def delete(self, request):
+    start_time = time.time()
+    data = request.data
+    try:
+        rule_id = data.get('rule_id')
+        rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+
+        # Soft delete (mark inactive)
+        rulemaster.is_active = False
+        rulemaster.save()
+
+        duration = (time.time() - start_time) * 1000
+        logger.info(f"[DELETE] Rule {rulemaster.rule_id} marked inactive in {duration:.2f} ms")
+
+        return Response({
+            "message": f"Rule {rulemaster.rule_id} - {rulemaster.rule_name} deleted successfully."
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        duration = (time.time() - start_time) * 1000
+        logger.error(f"[DELETE] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+get
+def get(self, request):
+    start_time = time.time()
+    try:
+        rule_id = request.query_params.get('rule_id')
+        if rule_id:
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+            conditions = list(rulemaster.autoallocationrulecondition_set.values())
+            actions = list(rulemaster.autoallocationruleaction_set.values())
+
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[GET] Rule {rulemaster.rule_id} fetched in {duration:.2f} ms")
+
+            return Response({
+                "rulemaster": {
+                    "rule_id": rulemaster.rule_id,
+                    "rule_name": rulemaster.rule_name,
+                    "applies_to": rulemaster.applies_to,
+                    "task_code": rulemaster.task_code,
+                    "action_type": rulemaster.action_type,
+                    "priority": rulemaster.priority,
+                    "is_active": rulemaster.is_active
+                },
+                "conditions": conditions,
+                "actions": actions
+            }, status=status.HTTP_200_OK)
+        else:
+            rules = AutoAllocationRuleMaster.objects.filter(is_active=True).values()
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[GET] All active rules fetched in {duration:.2f} ms")
+
+            return Response({"rules": list(rules)}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        duration = (time.time() - start_time) * 1000
+        logger.error(f"[GET] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+post
+
+   def post(self, request):
+        start_time = time.time()  # ⏱ log start
+        data = request.data
+        entity, airport = get_entity_airport(request)
+
+        try:
+            rule_id = data.get('rule_id')
+            rule_data = data.get("rulemaster", {})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            if rule_id:
+                rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+                logger.info(f"[POST] Using existing rule {rule_id}")
+            else:
+                department_id = GroundSupportEquipmentTypes.objects.filter(
+                    entity=entity,
+                    airport=airport,
+                    equipment_code=rule_data.get('task_code')
+                ).first().department_id
+
+                rulemaster = AutoAllocationRuleMaster.objects.create(
+                    rule_name=rule_data.get('rule_name'),
+                    applies_to=rule_data.get('applies_to'),
+                    task_code=rule_data.get('task_code'),
+                    action_type=rule_data.get('action_type'),
+                    start_date=rule_data.get('start_date'),
+                    end_date=rule_data.get('end_date'),
+                    created_by=rule_data.get('created_by'),
+                    is_active=True,
+                    department_id=department_id,
+                    priority=rule_data.get('priority', 1)
+                )
+                logger.info(f"[POST] Created new rule {rulemaster.rule_id} - {rulemaster.rule_name}")
+
+            created_condition = []
+            for condition_data in condition_list:
+                createcondition = AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+                created_condition.append(f"{createcondition.id} - {createcondition.parameter}")
+
+            created_action = []
+            for action_data in action_list:
+                createaction = AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+                created_action.append(f"{createaction.id} - {createaction.action_param}")
+
+            # ⏱ log end
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[POST] Rule {rulemaster.rule_id} processed in {duration:.2f} ms")
+
+            return Response({
+                "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                           f"conditions: {created_condition} and actions: {created_action} successfully."
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[POST] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+check console for output time logger
