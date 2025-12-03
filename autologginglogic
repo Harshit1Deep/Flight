@@ -1,0 +1,1094 @@
+import json
+import traceback
+import time
+from django.db.models import Prefetch
+from rest_framework.response import Response
+from datetime import datetime, timedelta, date
+from rest_framework.views import APIView
+from AviLeap.apis.flights import ShiftFlight
+from AviLeap.core import get_entity_airport
+from AutoAllocation.core import get_allocation_flight_data, get_flights_data_allocation, save_allocation_snapshot, \
+    get_version_data, save_allocated_flight_data, get_allocated_flight_data, get_allocated_summary_data, \
+    check_existing_flight_log, save_rostered_details, get_peak_hour_chart, get_allocated_resource_data, \
+    save_flight_summary, get_version_from_request_id, create_system_request_allocation, \
+    fetch_start_end_date, check_allocation_update, update_progress_allocation, increment_sub_version, \
+    update_summary_after_save, get_flight_common_allocations, format_summary
+from AviLeap.constants import auto_allocation_response, Cognito
+from django.shortcuts import render
+from AutoAllocation.dal import AllocationRequestStatus
+from AviLeap.core_base import get_user_obj_auth_type
+from shiftAllocation.avileap_changes.core import save_user_request_data, sending_notidications_data_to_livestream
+from AviLeap.apis.flights.core import get_flights_data
+from shiftAllocation.dal import ShiftTeamMembersDAL
+from shiftAllocation.models import AutoAllocationRequest, Departments
+from AviLeap.mixins import AuthMixin
+from AviLeap import logger
+from rest_framework import status
+import copy
+from .models import AutoAllocationRuleMaster,AutoAllocationRuleAction,AutoAllocationRuleCondition
+from  django.db import transaction
+from AviLeap.models import EntityAirports
+from shiftAllocation.views.core import department_wise_categories
+from AutoAllocation.dal import AutoAllocationReportDAL
+from django.http import JsonResponse
+from AviLeap.version import APIVersionMixin
+from AviLeap.apis.raf.core import RAFormDALV2
+from AviLeap.models import GroundSupportEquipmentTypes
+import logging
+
+class DispatcherAllocation(APIView):
+
+    def get(self,request):
+        current_time = datetime.now()
+        timeline_start = (current_time - timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S')
+        timeline_end = (current_time + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S')
+
+        sta1 = (current_time - timedelta(minutes=40)).strftime('%Y-%m-%dT%H:%M:%S')
+        min_start1 = (current_time - timedelta(minutes=40)).strftime('%Y-%m-%dT%H:%M:%S')
+        std1 = (current_time + timedelta(minutes=20)).strftime('%Y-%m-%dT%H:%M:%S')
+        max_start1 = (current_time + timedelta(minutes=20)).strftime('%Y-%m-%dT%H:%M:%S')
+
+        sta2 = (current_time + timedelta(minutes=20)).strftime('%Y-%m-%dT%H:%M:%S')
+        min_start2 = (current_time + timedelta(minutes=20)).strftime('%Y-%m-%dT%H:%M:%S')
+        std2 = (current_time + timedelta(minutes=60)).strftime('%Y-%m-%dT%H:%M:%S')
+        max_start2 = (current_time + timedelta(minutes=60)).strftime('%Y-%m-%dT%H:%M:%S')
+
+        response_data = {
+            "timeline_start": timeline_start,
+            "timeline_end": timeline_end,
+            "result": [
+                {
+                    "employee_id": 10019753,
+                    "employee_name": "HARISHA S",
+                    "allocations": [
+                        {
+                            "STD": std1,
+                            "max_start": max_start1,
+                            "STA": sta1,
+                            "flight_arrival_id": 1338220,
+                            "min_start": min_start1,
+                            "flight_number": "AI 492",
+                            "splitted_for": "arrival",
+                            "flight_departure_id": 1302621,
+                            "tasks_string": "\n 1) BAY REQUIREMENT OPERATOR : 13:00 to 14:05",
+                            "margin_top": -34,
+                            "request_accepted": True
+                        }
+                    ],
+                    "task_name": "PC - 01",
+                },
+                {
+                    "employee_id": 10027728,
+                    "employee_name": "SUBHASH.G",
+                    "allocations": [
+                        {
+                            "STD": std2,
+                            "max_start": max_start2,
+                            "tasks": [
+                                {
+                                    "operation_code": "",
+                                    "start_time": sta2,
+                                    "end_time": std2,
+                                    "id": 1210426,
+                                    "operation_name": "Headset Operator"
+                                }
+                            ],
+                            "STA": sta2,
+                            "flight_arrival_id": 1374287,
+                            "min_start": min_start2,
+                            "flight_number": "6E 6075",
+                            "splitted_for": "arrival",
+                            "flight_departure_id": 1302621,
+                            "tasks_string": "\n 1) Headset Operator : 14:20 to 14:05",
+                            "margin_top": -34,
+                            "request_accepted": False
+                        }
+                    ],
+                    "task_name": "PC - 02",
+                }
+            ]
+        }
+
+        return Response({'result':response_data})
+
+
+class DispatcherFlights(APIView):
+    def get(self,request):
+        current_time = datetime.now()
+        arrival_time = (current_time + timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%S')
+        departure_time = (current_time + timedelta(minutes=60)).strftime('%Y-%m-%dT%H:%M:%S')
+
+        # Flight data
+        flights_data = {
+            "flights": [
+                {
+                    "logid": 1691920,
+                    "flight_arrival_id": 1351801,
+                    "flighticon": {},
+                    "airline": "AIR INDIA",
+                    "flight_number": "AI 301",
+                    "bay": "A13",
+                    "sta": arrival_time,
+                    "std": departure_time,
+                    "etd": departure_time,
+                    "eta": arrival_time,
+                    "aircraft": "B788",
+                    "completed_task_count": 2,
+                    "total_task_count": 5,
+                    "tasks":[
+                        {"name":"Deboarding", "start_loc": "N12", "end_loc":"A-12","star_time":"2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"},
+                        {"name": "Boarding", "start_loc": "A-11", "end_loc": "N-14",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"}
+                    ]
+                },
+                {
+                    "logid": 1691960,
+                    "flight_arrival_id": 1390591,
+                    "airline": "Alliance Air",
+                    "flight_number": "9I 832",
+                    "bay": "217",
+                    "aircraft": "A388",
+                    "sta": arrival_time,
+                    "std": departure_time,
+                    "etd": departure_time,
+                    "eta": arrival_time,
+                    "completed_task_count": 3,
+                    "total_task_count": 5,
+                    "tasks": [
+                        {"name": "Deboarding", "start_loc": "N12", "end_loc": "A-12",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"},
+                        {"name": "Boarding", "start_loc": "A-11", "end_loc": "N-14",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"}
+                    ]
+                }
+            ],
+            "adhoc": [
+                {
+                    "logid": 1692072,
+                    "flight_arrival_id": 1337427,
+                    "airline": "AIR INDIA",
+                    "flight_number": "AI 532",
+                    "bay": "241",
+                    "aircraft": "C458",
+                    "sta": arrival_time,
+                    "std": departure_time,
+                    "etd": departure_time,
+                    "eta": arrival_time,
+                    "completed_task_count": 3,
+                    "total_task_count": 6,
+                    "tasks": [
+                        {"name": "Deboarding", "start_loc": "N12", "end_loc": "A-12",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"},
+                        {"name": "Boarding", "start_loc": "A-11", "end_loc": "N-14",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"}
+                    ]
+                },
+                {
+                    "logid": 1691904,
+                    "flight_arrival_id": 1390523,
+                    "airline": "AIR INDIA",
+                    "flightnoarr": "AI 2665",
+                    "bay": "223",
+                    "aircraft": "C435",
+                    "sta": arrival_time,
+                    "std": departure_time,
+                    "etd": departure_time,
+                    "eta": arrival_time,
+                    "completed_task_count": 3,
+                    "total_task_count": 7,
+                    "tasks": [
+                        {"name": "Deboarding", "start_loc": "N12", "end_loc": "A-12",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"},
+                        {"name": "Boarding", "start_loc": "A-11", "end_loc": "N-14",
+                         "star_time": "2025-04-11 12:00:00",
+                         "end_time": "2025-04-11 12:20:"}
+                    ]
+                }
+            ]
+        }
+
+        # Return response
+        return Response({"flights": flights_data})
+
+class AllocationReport(APIView, APIVersionMixin):
+
+    def post(self, request):
+        return self.version_match(request)
+
+    def post_v2(self, request):
+        data = request.data
+        try:
+            request_id = data['request_id']
+            response = eval(AutoAllocationRequest.objects.filter(request_id=request_id).values('not_allocated_details').first().get('not_allocated_details'))
+            response['flights'].update(response.get('common_allocations') or {})
+        except:
+            entity, airport = get_entity_airport(request)
+            date = data.get('date')
+            user = request.user
+            start_time, end_time = f"{date} 00:00:00", f"{date} 23:59:59"
+            department_id = data.get('department_id')
+            lock_flight = [0, 1]
+            if not user.has_perm(user, "FLIGHTS:LOCK-AND-UNLOCK-FLIGHT"):
+                lock_flight = [0]
+            bay_catogery = user.has_perm(user, "REALTIMEALLOCATION:SLA-WITH-BAY-CATEGORY")
+            flight_categories = department_wise_categories(department_id, entity, airport)
+
+            flights = get_flights_data_allocation(entity, airport, department_id, start_time, end_time, lock_flight, bay_catogery,
+                                       flight_categories)
+            response =  get_allocation_flight_data(user, date, department_id, entity, airport, flights)
+            response['rules'] = auto_allocation_response['rules']
+        template_name = 'auto_allocation_report.html'
+        return render(request, template_name, context={'data': json.dumps(response)})
+
+
+    def post_v1(self, request):
+        data = request.data
+        try:
+            request_id = data['request_id']
+            response = eval(AutoAllocationRequest.objects.filter(request_id=request_id).values('not_allocated_details').first().get('not_allocated_details'))
+            response['flights'].update(response.get('common_allocations') or {})
+        except:
+            try:
+                entity, airport = get_entity_airport(request)
+                date = data.get('date')
+                user = request.user
+                date = datetime.strptime(date, "%Y-%m-%d")
+                start_time = date.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_time = start_time+timedelta(days=1)
+                department_id = data.get('department_id')
+                gse_data = ShiftTeamMembersDAL.get_equipments_for_airport(entity, airport)
+
+                bay_catogery = user.has_perm(user, "REALTIMEALLOCATION:SLA-WITH-BAY-CATEGORY")
+
+                mandate_gse_slas = RAFormDALV2.get_mandatory_gse_sla_data_v1(airport, entity, department_id,
+                                                                             bay_catogery)
+
+                # On Duty Resources present in allocation date
+                on_duty_resources_df = AutoAllocationReportDAL.get_on_duty_resources(date, department_id)
+
+                if on_duty_resources_df.empty or not on_duty_resources_df['task_count'].notna().any():
+                    raise ValueError("No allocation data found ")
+
+                flights_data, common_allocations, break_allocations= get_flight_common_allocations(user, airport,
+                                                                        entity, start_time,end_time, department_id, gse_data)
+
+                response = format_summary(start_time, end_time, on_duty_resources_df, flights_data,
+                               break_allocations, gse_data, common_allocations, mandate_gse_slas)
+
+                response['department_name'] = data.get('department_name')
+                response['rules'] = AutoAllocationReportDAL.fetch_allocation_rules(department_id) or auto_allocation_response['rules']
+
+            except Exception as e:
+                return JsonResponse({'message': "No Data Available"}, status=200)
+        template_name = 'auto_allocation_report.html'
+        return render(request, template_name, context={'data': json.dumps(response,indent=2, default=str)})
+
+class SLATasks(APIView):
+    def get(self,request):
+        pass
+
+class AutoAllocationTrigger(AuthMixin):
+
+    def post(self, request):
+        try:
+            allocation_trigger = request.data.get("auto_allocation")
+            user = request.user
+            entity = user.entity
+            airport_id = user.operation_unit
+            auth_type = get_user_obj_auth_type(user)
+            if auth_type in Cognito.AUTH_TYPE:
+                user_role = list(user.custom_roles.values('role_id', 'role_name'))
+            else:
+                user_role = list(user.roles.values('role_id', 'role_name'))
+            role_name = user_role[0].get('role_name')
+            _date = request.data.get("date") or str(datetime.now().date())
+            start_date, end_date = fetch_start_end_date(_date)
+            department_id = request.data.get("department_id")
+            department_code = request.data.get("department_code")
+            department_name = request.data.get("department_name")
+            shift_details = request.data.get("shift_details", "all")
+            logger.info("Auto Allocation trigger initiated by {} {} {}".format(user.name, department_name,_date))
+
+
+            in_progress_data = AllocationRequestStatus.get_any_ongoing_request_is_running()
+            if in_progress_data:
+                logger.info("Auto Allocation trigger initiated {}".format(in_progress_data))
+                return Response({"status": True,"message_timer":4, "message": in_progress_data})
+
+            try:
+                department_obj = Departments.objects.get(id=department_id)
+                cross_utilisation_data = department_obj.cross_utilisation_data
+            except:
+                cross_utilisation_data = []
+            if not department_id or not shift_details:
+                return Response(
+                    {"status": False, "message": "Required fields are missing in the request."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not start_date or not end_date:
+                return Response({"status": False, "message": "Invalid or unsupported date range."},
+                                status=status.HTTP_404_NOT_FOUND)
+            # #TODO once deploy the auto allocation changes into fraport then use below code all airports
+            dep_data = cross_utilisation_data or [{"id": department_id, "sort": 1, "code": department_code,
+                                                   "name": department_name}]
+            data = {"auto_allocation_trigger": allocation_trigger,
+                    "start_date": start_date, "end_date": end_date,
+                    "entity": entity, "airport_id": airport_id, "UserName": user.name,"role_name":role_name,
+                    "userId": user.userid, "departmentId": department_id, "department_code": department_code,
+                    "department_name": department_name, "shiftDetails": shift_details,
+                    }
+            copy_data = copy.deepcopy(data)
+            for each_cross_dep in dep_data:
+                copy_data['department_name'] = each_cross_dep.get("name")
+                copy_data['departmentId'] = each_cross_dep.get("id")
+                request_id , version_number = save_user_request_data(copy_data)
+                each_cross_dep["request_id"], each_cross_dep["version_number"] =request_id , version_number
+                data["request_id"], data["version_number"] = request_id, version_number
+            data['department_details'] = dep_data
+            # else:
+            # data = {"auto_allocation_trigger": allocation_trigger,
+            #         "start_date": start_date, "end_date": end_date,
+            #         "entity": entity, "airport_id": airport_id, "UserName": user.name,
+            #         "userId": user.userid, "departmentId": department_id,"department_code":department_code,
+            #         "department_name":department_name,"shiftDetails": shift_details,
+            #         "department_details" : cross_utilisation_data or [{"id": department_id, "sort":1, "code":department_code}]
+            #         }
+            # data["request_id"], data["version_number"] = save_user_request_data(data
+
+            logger.info("Auto Allocation trigger trying to publish {}".format(data))
+            sending_notidications_data_to_livestream("AutoAllocationTrigger",
+                                                     data)
+            time.sleep(5)
+            logger.info("Auto Allocation trigger published successfully ")
+            return Response({"status": True,"message_timer":2, "message": "Auto Allocation Trigger initiated","request_id":data.get("request_id")})
+        except Exception as e:
+            logger.info("Auto Allocation trigger got error {}".format(allocation_trigger))
+            return Response({"status": False, "message": f"Error: {str(e)}"},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    def patch(self, request):
+        try:
+            request_data = request.data
+            update_fields = {}
+            # logger.info("Auto Allocation Request: :{}".format(request_data))
+
+            try:
+                # Check if request id is sent
+                request_id = request_data["request_id"]
+            except Exception:
+                logger.info("Auto Allocation Request: Valid request_id is required:{}".format(request_id))
+                return Response({"error": "Valid request_id is required:{}".format(request_id)},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            update_fields["status"] = request_data.get("status", "InProgress")
+
+            try:
+                update_fields["not_allocated_details"] = json.dumps(request_data["summery"])
+            except Exception:
+                logger.info("Summary is not sent")
+
+            try:
+                update_fields["total_flights"] = request_data["total_flights"]
+            except Exception:
+                logger.info("total flights is not sent")
+
+            try:
+                update_fields["total_processed_flights"] = request_data["processed_flights"]
+            except Exception:
+                logger.info("processed flights is not sent")
+
+            try:
+                update_fields["progress"] = request_data["progress"]
+            except Exception:
+                logger.info("progress is not sent")
+
+            try:
+                update_fields["department_id"] = request_data["department_id"]
+            except Exception:
+                logger.info("department id is not sent")
+
+            # logger.info("Updating Request status:{}".format(update_fields))
+            rows_updated = AllocationRequestStatus.update_request_status(request_id, update_fields)
+            try:
+                # IF request ID is not found, It will update 0 rows
+                # Send 404 NOT FOUND ERROR if 0 rows updated.
+                1 / rows_updated
+
+                logger.info("Request status updated successfully")
+                return Response({"message": "Request status updated successfully", "updated_fields": update_fields},
+                                status=status.HTTP_200_OK)
+            except ZeroDivisionError:
+                logger.info("Request ID not found:{}".format(request_id))
+                return Response({"error": "Request ID not found:{}".format(request_id)},
+                                status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.info("Exception in AutoAllocationTrigger patch API:{}".format(traceback.format_exc()))
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AutoAllocationLogs(AuthMixin):
+
+    def get(self, request):
+        entity, airport = get_entity_airport(request)
+        date = request.GET.get("date")
+        department_id = request.GET.get('department_id')
+        department_name = request.GET.get('department_name')
+        versions = get_version_data(date, department_id)
+        shifts = ShiftTeamMembersDAL.get_shifts_departments_and_designation(entity, airport, department_id, department_name)
+        return Response({"status": True, "versions": versions, "meta": shifts})
+
+    def post(self, request):
+        user = request.user
+        entity, airport_id = user.entity, user.operation_unit
+        date = request.data.get("date")
+        department_id, request_id = request.data.get("department_id"),  request.data.get("request_id")
+        logger.info('AutoAllocationSummary: request id {} received for processing AllocationLogs as {}'.format(request_id, request.data))
+        try:
+            estatus = save_allocation_snapshot(department_id, date, request_id)
+            if estatus:
+                logger.info('AutoAllocationSummary: request id {} success to insert data in AllocationLogs'.format(request_id))
+                return Response({"status": estatus}, status=status.HTTP_200_OK)
+            else:
+                logger.info('AutoAllocationSummary: request id {} failed to insert data in AllocationLogs'.format(request_id))
+                return Response({"status": estatus}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.info('AutoAllocationSummary: request id {} failed to insert data in AllocationLogs as {}'.format(request_id, e))
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AutoAllocationResourceSummary(AuthMixin):
+
+    def get(self, request):
+        entity, airport = get_entity_airport(request)
+        request_ids = request.GET.getlist('request_ids', [])
+        department_id = request.GET.get('department_id')
+        shift_start = request.GET.get('shift_start')
+        shift_end = request.GET.get('shift_end')
+        shift = request.GET.get('shift')
+        role = request.GET.get('role')
+        resource_data = get_allocated_resource_data(request_ids, shift, shift_start, shift_end, role)
+        return Response({"status": True, "resource_data": resource_data})
+
+class AutoAllocationFlightSummary(AuthMixin):
+
+    def get(self, request):
+        entity, airport = get_entity_airport(request)
+        request_ids = request.GET.getlist('request_ids', [])
+        department_id = request.GET.get('department_id')
+        shift_start = request.GET.get('shift_start')
+        shift_end = request.GET.get('shift_end')
+        try:
+            flight_data, meta = get_allocated_flight_data(request_ids, airport, entity, shift_start, shift_end)
+            response = {"status": True, "flight_data": flight_data, "meta": meta}
+        except Exception as e:
+            return Response({"error": str(e), "status": False}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(response)
+
+
+    def post(self, request):
+        user = request.user
+        entity, airport = get_entity_airport(request)
+        data = request.data
+        start_time = datetime.strptime(data.get('date'), "%Y-%m-%d")
+        end_time = start_time + timedelta(days=1)
+        department_id = data.get('department_id')
+        request_id = data.get("request_id")
+        logger.info('AutoAllocationSummary: request id {} received for processing AllocationFlightLogs as {}'.format(request_id, data))
+        try:
+            # e_status = check_existing_flight_log(request_id, 'allocation_flight_log')
+            flight_categories = department_wise_categories(department_id, entity, airport)
+            flights = get_flights_data(user, entity, airport, department_id, str(start_time), str(end_time), None, flight_categories)
+            save_status, flight_df = save_allocated_flight_data(flights, request_id)
+            summary_status = save_flight_summary(flights, request_id)
+            system_version_id = get_version_from_request_id(str(request_id), entity, airport)
+            if system_version_id:
+                create_system_request_allocation(flights, flight_df, system_version_id)
+            if save_status and summary_status:
+                logger.info('AutoAllocationSummary: request id {} success to insert data in AllocationFlightLogs'.format(request_id))
+                return Response({'status': save_status}, status=status.HTTP_200_OK)
+            logger.info('AutoAllocationSummary: request id {} failed to insert data in AllocationFlightLogs'.format(request_id))
+            return Response({'status': save_status}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.info('AutoAllocationSummary: request id {} failed to insert data in AllocationFlightLogs as {}'.format(request_id, e))
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AutoAllocationUtilizationSummary(AuthMixin):
+
+    def get(self, request):
+        entity, airport = get_entity_airport(request)
+        request_ids = request.GET.getlist('request_ids', [])
+        role = request.GET.get('role')
+        shift_start = request.GET.get('shift_start')
+        shift_end = request.GET.get('shift_end')
+        shift = request.GET.get('shift')
+        try:
+            response = get_allocated_summary_data(request_ids, shift, shift_start, shift_end, role)
+            response["status"] = True
+        except Exception as e:
+            return Response({"error": str(e), "status": False}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(response)
+
+    def post(self, request):
+        data = request.data
+        logger.info('AutoAllocationSummary: request id {} received for processing rostered, utilization as {}'.format(data.get('request_id'), data))
+        try:
+            save_status = save_rostered_details(data, request.user)
+            if save_status:
+                logger.info('AutoAllocationSummary: request id {} success to save for rostered, utilization.'.format(data.get('request_id')))
+                update_summary_after_save(data.get('request_id'))
+                return Response({'status': save_status}, status=status.HTTP_200_OK)
+            logger.info('AutoAllocationSummary: request id {} failed to save for rostered, utilization.'.format(data.get('request_id')))
+            return Response({'status': save_status}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.info('AutoAllocationSummary: request id {} failed to insert data in rostered, utilization as {}'.format(data.get('request_id'), e))
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PeakHourSummary(AuthMixin):
+
+    def get(self, request):
+        entity, airport = get_entity_airport(request)
+        request_id = request.GET.get("request_id")
+        role = request.GET.get('role')
+        shift_start = request.GET.get('shift_start')
+        shift_end = request.GET.get('shift_end')
+        shift = request.GET.get('shift')
+        try:
+            response = get_peak_hour_chart(request_id, role, shift, shift_start, shift_end)
+            response['status'] = True
+        except Exception as e:
+            logger.info('PeakHourChart: error found as {}'.format(e))
+            response = {'status': False}
+        return Response(response)
+
+class SystemUpdateAllocation(AuthMixin):
+
+    def get(self, request):
+        user = request.user
+        entity, airport = get_entity_airport(request)
+        data = dict()
+        try:
+            data = check_allocation_update()
+            for unit in data:
+                department_id = unit.get('DepartmentId')
+                version = increment_sub_version(str(unit.get('Version')))
+                department_obj = Departments.objects.get(id=department_id)
+                date = unit.get('date')
+                logger.info(f'AutoAllocationSummary: System request received for version {version} date {date} and department {department_obj.code}')
+                ####################################
+                start_date, end_date = fetch_start_end_date(date)
+                department_code = department_obj.code
+                department_name = department_obj.name
+                kwargs = {"start_date": str(start_date), "end_date": str(end_date), "entity": entity, "airport_id": airport, "UserName": "System",
+                            "userId": "", "departmentId": department_id, "department_code": department_code, "department_name": department_name,
+                            "version": version, "system_update": True}
+                request_id, version = save_user_request_data(kwargs)
+                data = {"date": str(date), "department_id":department_id, "request_id": request_id}
+                fstart = datetime.strptime(str(data.get('date')), "%Y-%m-%d")
+                fend = fstart + timedelta(days=1)
+                flight_categories = department_wise_categories(department_id, entity, airport)
+                flights = get_flights_data(user, entity, airport, department_id, str(fstart), str(fend), None, flight_categories)
+                save_status, flight_df = save_allocated_flight_data(flights, request_id)
+                summary_status = save_flight_summary(flights, request_id)
+                save_summary_status = save_rostered_details(data, request.user)
+                if save_status and summary_status and save_summary_status:
+                    logger.info('AutoAllocationSummary: System request id {} success to save.'.format(data.get('request_id')))
+                    update_progress_allocation(request_id, data)
+        except Exception as e:
+            logger.info('AutoAllocationSummary: System request {} failed to insert data as {}'.format(data, e))
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'status': 'success'}, status=status.HTTP_200_OK)
+
+class Rules(APIView):
+    # def post(self, request):
+    #     data = request.data
+    #     entity, airport = get_entity_airport(request)
+    #     try:
+    #         rule_id = data.get('rule_id')
+    #         rule_data = data.get("rulemaster", {})
+    #         condition_list = data.get('condition', [])
+    #         action_list = data.get('action', [])
+    #
+    #         if rule_id:
+    #             rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+    #         else:
+    #             department_id = GroundSupportEquipmentTypes.objects.filter(entity=entity, airport=airport,equipment_code=rule_data.get('task_code')).first().department_id
+    #             rulemaster = AutoAllocationRuleMaster.objects.create(
+    #                 rule_name=rule_data.get('rule_name'),
+    #                 applies_to=rule_data.get('applies_to'),
+    #                 task_code=rule_data.get('task_code'),
+    #                 action_type=rule_data.get('action_type'),
+    #                 start_date=rule_data.get('start_date'),
+    #                 end_date=rule_data.get('end_date'),
+    #                 created_by=rule_data.get('created_by'),
+    #                 is_active = True,
+    #                 department_id = department_id,
+    #                 priority=rule_data.get('priority', 1)
+    #             )
+    #
+    #         created_condition = []
+    #         for condition_data in condition_list:
+    #             createcondition = AutoAllocationRuleCondition.objects.create(
+    #                 rule_id=rulemaster,
+    #                 group_id=condition_data.get('group_id', 1),
+    #                 parameter=condition_data.get('parameter'),
+    #                 operator=condition_data.get('operator'),
+    #                 value=condition_data.get('value'),
+    #                 logical_operator=condition_data.get('logical_operator')
+    #             )
+    #             created_condition.append(f"{createcondition.id} - {createcondition.parameter} ")
+    #
+    #         created_action = []
+    #         for action_data in action_list:
+    #             createaction = AutoAllocationRuleAction.objects.create(
+    #                 rule_id=rulemaster,
+    #                 action_param=action_data.get('action_param'),
+    #                 created_by=action_data.get('created_by'),
+    #                 value=action_data.get('value', '')
+    #             )
+    #             created_action.append(f"{createaction.id} - {createaction.action_param}")
+    #
+    #         return Response({
+    #             "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {created_condition} "
+    #                        f"and action: {created_action} successfully."
+    #         }, status=status.HTTP_201_CREATED)
+    #
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    logger = logging.getLogger(__name__)
+
+    def post(self, request):
+        start_time = time.time()  # ⏱ log start
+        data = request.data
+        entity, airport = get_entity_airport(request)
+
+        try:
+            rule_id = data.get('rule_id')
+            rule_data = data.get("rulemaster", {})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            if rule_id:
+                rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+                logger.info(f"[POST] Using existing rule {rule_id}")
+            else:
+                department_id = GroundSupportEquipmentTypes.objects.filter(
+                    entity=entity,
+                    airport=airport,
+                    equipment_code=rule_data.get('task_code')
+                ).first().department_id
+
+                rulemaster = AutoAllocationRuleMaster.objects.create(
+                    rule_name=rule_data.get('rule_name'),
+                    applies_to=rule_data.get('applies_to'),
+                    task_code=rule_data.get('task_code'),
+                    action_type=rule_data.get('action_type'),
+                    start_date=rule_data.get('start_date'),
+                    end_date=rule_data.get('end_date'),
+                    created_by=rule_data.get('created_by'),
+                    is_active=True,
+                    department_id=department_id,
+                    priority=rule_data.get('priority', 1)
+                )
+                logger.info(f"[POST] Created new rule {rulemaster.rule_id} - {rulemaster.rule_name}")
+
+            created_condition = []
+            for condition_data in condition_list:
+                createcondition = AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+                created_condition.append(f"{createcondition.id} - {createcondition.parameter}")
+
+            created_action = []
+            for action_data in action_list:
+                createaction = AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+                created_action.append(f"{createaction.id} - {createaction.action_param}")
+
+            # ⏱ log end
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[POST] Rule {rulemaster.rule_id} processed in {duration:.2f} ms")
+
+            return Response({
+                "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                           f"conditions: {created_condition} and actions: {created_action} successfully."
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[POST] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # def patch(self, request):
+    #     data = request.data
+    #     try:
+    #         rule_data = data.get('rulemaster', {})
+    #         condition_list = data.get('condition', [])
+    #         action_list = data.get('action', [])
+    #
+    #         rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+    #
+    #         with transaction.atomic():
+    #
+    #             for field, value in rule_data.items():
+    #                 if field != "rule_id" and hasattr(rulemaster, field):
+    #                     setattr(rulemaster, field, value)
+    #             rulemaster.save()
+    #
+    #             updated_conditions = []
+    #             for condition_data in condition_list:
+    #                 condition_id = condition_data.get('condition_id')
+    #                 if condition_id:
+    #                     condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rulemaster)
+    #                     for field, value in condition_data.items():
+    #                         if field != "condition_id" and hasattr(condition, field):
+    #                             setattr(condition, field, value)
+    #                     condition.save()
+    #                     updated_conditions.append(f"{condition.id} - {condition.parameter}")
+    #
+    #             updated_actions = []
+    #             for action_data in action_list:
+    #                 action_id = action_data.get('action_id')
+    #                 if action_id:
+    #                     action = AutoAllocationRuleAction.objects.get(id=action_id, rule_id=rulemaster)
+    #                     for field, value in action_data.items():
+    #                         if field != "action_id" and hasattr(action, field):
+    #                             setattr(action, field, value)
+    #                     action.save()
+    #                     updated_actions.append(f"{action.id} - {action.action_param} ")
+    #
+    #         return Response({
+    #             "message": f"updated rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {updated_conditions} "
+    #                        f"and action: {updated_actions} successfully."}, status=status.HTTP_200_OK)
+    #
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def patch(self, request):
+        start_time = time.time()
+        data = request.data
+        try:
+            rule_data = data.get("rulemaster", {})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+            for field,value in rule_data.items():
+                setattr(rulemaster, field, value)
+            rulemaster.save()
+
+            updated_condition = []
+            for condition_data in condition_list:
+                condition_id = condition_data.get('condition_id')
+                if condition_id:
+                    condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rulemaster)
+                    for field, value in condition_data.items():
+                        if field != "condition_id" and hasattr(condition, field):
+                             setattr(condition, field, value)
+                    condition.save()
+                    updated_condition.append(f"{condition.id} - {condition.parameter}")
+
+            updated_action = []
+            for action_data in action_list:
+                action_id = action_data.get('action_id')
+                if action_id:
+                    action = AutoAllocationRuleAction.objects.get(id=action_id,rule_id=rulemaster)
+                    for field,value in action_data.items():
+                        if field != 'action_id' and hasattr(action, field):
+                            setattr(action, field, value)
+                    action.save()
+                    updated_action.append(f"{action.id} - {action.action_param}")
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[PATCH] Rule {rulemaster.rule_id} updated in {duration:.2f} ms")
+            return Response({"message":f"Updated rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                             f"conditions: {updated_condition} and actions: {updated_action} successfully."},
+                            status=status.HTTP_200_OK)
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[PATCH] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    # def get(self, request):
+    #     rule_id = request.query_params.get('rule_id')
+    #     entity, airport = get_entity_airport(request)
+    #     if not entity or not airport:
+    #         return Response({"error": "User entity or airport not found"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #     try:
+    #         rulemasters = AutoAllocationRuleMaster.objects.filter(is_active=True).prefetch_related('conditions', 'actions')
+    #         if rule_id:
+    #             rulemasters = rulemasters.filter(rule_id=rule_id)
+    #         data_rows = []
+    #         for rulemaster in rulemasters:
+    #             rule_data = {
+    #                 "rule_id": rulemaster.rule_id,
+    #                 "rule_name": rulemaster.rule_name,
+    #                 "applies_to": rulemaster.applies_to,
+    #                 "task_code": rulemaster.task_code,
+    #                 "action_type": rulemaster.action_type,
+    #                 "start_date": rulemaster.start_date,
+    #                 "end_date": rulemaster.end_date,
+    #                 "created_by": rulemaster.created_by,
+    #                 "updated_by": rulemaster.updated_by,
+    #                 "department_id": rulemaster.department_id,
+    #                 "priority": rulemaster.priority,
+    #             }
+    #
+    #             conditions_data = [
+    #                 {
+    #                     "group_id": condition.group_id,
+    #                     "parameter": condition.parameter,
+    #                     "operator": condition.operator,
+    #                     "value": condition.value,
+    #                     "logical_operator": condition.logical_operator
+    #                 }
+    #                 for condition in rulemaster.conditions.all()
+    #             ]
+    #             actions_data = [
+    #                 {
+    #                     "action_param": action.action_param,
+    #                     "created_by": action.created_by,
+    #                     "updated_by": getattr(action, 'updated_by', None),
+    #                     "value": action.value
+    #                 }
+    #                 for action in rulemaster.actions.all()
+    #             ]
+    #             data_rows.append([rule_data, conditions_data, actions_data])
+    #
+    #         config_data = EntityAirports.objects.filter(entity=entity, airport=airport).values_list('config',flat=True).first()
+    #         metadeta = json.loads(config_data) if config_data else {}
+    #         rule_json = metadeta.get("rule_config", {})
+    #         result = {
+    #             "columns": ["Rules", "Conditions", "Actions"],
+    #             "data": data_rows,
+    #             "meta": rule_json
+    #         }
+    #         return Response(result, status=status.HTTP_200_OK)
+    #
+    #     except AutoAllocationRuleMaster.DoesNotExist:
+    #         return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request):
+        start_time = time.time()
+        rule_id = request.query_params.get('rule_id')
+        entity, airport = get_entity_airport(request)
+
+        if not entity or not airport:
+            duration = (time.time() - start_time) * 1000
+            logger.warning(f"[GET] Missing entity/airport. Duration: {duration:.2f} ms")
+            return Response({"error": "User entity or airport not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rulemasters = AutoAllocationRuleMaster.objects.filter(is_active=True).prefetch_related('conditions',
+                                                                                                   'actions')
+            if rule_id:
+                rulemasters = rulemasters.filter(rule_id=rule_id)
+
+            data_rows = []
+            for rulemaster in rulemasters:
+                rule_data = {
+                    "rule_id": rulemaster.rule_id,
+                    "rule_name": rulemaster.rule_name,
+                    "applies_to": rulemaster.applies_to,
+                    "task_code": rulemaster.task_code,
+                    "action_type": rulemaster.action_type,
+                    "start_date": rulemaster.start_date,
+                    "end_date": rulemaster.end_date,
+                    "created_by": rulemaster.created_by,
+                    "updated_by": rulemaster.updated_by,
+                    "department_id": rulemaster.department_id,
+                    "priority": rulemaster.priority,
+                }
+
+                conditions_data = [
+                    {
+                        "group_id": condition.group_id,
+                        "parameter": condition.parameter,
+                        "operator": condition.operator,
+                        "value": condition.value,
+                        "logical_operator": condition.logical_operator
+                    }
+                    for condition in rulemaster.conditions.all()
+                ]
+
+                actions_data = [
+                    {
+                        "action_param": action.action_param,
+                        "created_by": action.created_by,
+                        "updated_by": getattr(action, 'updated_by', None),
+                        "value": action.value
+                    }
+                    for action in rulemaster.actions.all()
+                ]
+
+                data_rows.append([rule_data, conditions_data, actions_data])
+
+            config_data = EntityAirports.objects.filter(entity=entity, airport=airport).values_list('config',
+                                                                                                    flat=True).first()
+            metadeta = json.loads(config_data) if config_data else {}
+            rule_json = metadeta.get("rule_config", {})
+
+            result = {
+                "columns": ["Rules", "Conditions", "Actions"],
+                "data": data_rows,
+                "meta": rule_json
+            }
+
+            duration = (time.time() - start_time) * 1000
+            count = len(data_rows)
+            msg = f"[GET] {'Single rule' if rule_id else 'Active rules'} fetched: {count} row(s) in {duration:.2f} ms"
+            if rule_id:
+                msg += f" (rule_id={rule_id})"
+            logger.warning(msg)
+
+            return Response(result, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[GET] Rule not found (rule_id={rule_id}). Duration: {duration:.2f} ms")
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[GET] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # def delete(self, request):
+    #     data = request.data
+    #     try:
+    #         rule_id = data.get('rule_id')
+    #         condition_ids = data.get('condition_id')
+    #         action_ids = data.get('action_id')
+    #
+    #         if not rule_id:
+    #             return Response({"error": "Missing rule_id"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #         rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+    #
+    #         deleted_conditions = []
+    #         deleted_actions = []
+    #
+    #         if condition_ids:
+    #             conditions = AutoAllocationRuleCondition.objects.filter(id__in=condition_ids, rule_id=rule_id)
+    #             deleted_conditions = [f"{cond.id} - {cond.parameter} " for cond in conditions]
+    #             conditions.delete()
+    #
+    #         if action_ids:
+    #             actions = AutoAllocationRuleAction.objects.filter(id__in=action_ids, rule_id=rule_id)
+    #             deleted_actions = [f"{act.id} - {act.action_param}" for act in actions]
+    #             actions.delete()
+    #
+    #         if not condition_ids and not action_ids:
+    #             rulemaster.is_active = False
+    #             rulemaster.save()
+    #             all_conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+    #             all_actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+    #             deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in all_conditions]
+    #             deleted_actions = [f"{act.id} - {act.action_param}" for act in all_actions]
+    #             all_conditions.delete()
+    #             all_actions.delete()
+    #             return Response({
+    #                 "message": f"rules -  {rule_id} deactivated. All related conditions and actions deleted.",
+    #                 "conditions_deleted": deleted_conditions,
+    #                 "actions_deleted": deleted_actions
+    #             }, status=status.HTTP_200_OK)
+    #
+    #         return Response({"message":f"deleted rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {deleted_conditions} "
+    #                        f"and action: {deleted_actions} successfully." }, status=status.HTTP_200_OK)
+    #
+    #     except AutoAllocationRuleMaster.DoesNotExist:
+    #         return Response({"error": "Rulemaster not found"}, status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request):
+        start_time = time.time()
+        data = request.data
+        try:
+            rule_id = data.get('rule_id')
+            condition_ids = data.get('condition_id')
+            action_ids = data.get('action_id')
+
+            if not rule_id:
+                duration = (time.time() - start_time) * 1000
+                logger.warning(f"[DELETE] Missing rule_id in request. Duration: {duration:.2f} ms")
+                return Response({"error": "Missing rule_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+
+            deleted_conditions = []
+            deleted_actions = []
+
+            # --- Delete specific conditions ---
+            if condition_ids:
+                conditions = AutoAllocationRuleCondition.objects.filter(id__in=condition_ids, rule_id=rule_id)
+                deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in conditions]
+                conditions.delete()
+                logger.warning(f"[DELETE] Rule {rule_id}: deleted conditions {deleted_conditions}")
+
+            # --- Delete specific actions ---
+            if action_ids:
+                actions = AutoAllocationRuleAction.objects.filter(id__in=action_ids, rule_id=rule_id)
+                deleted_actions = [f"{act.id} - {act.action_param}" for act in actions]
+                actions.delete()
+                logger.warning(f"[DELETE] Rule {rule_id}: deleted actions {deleted_actions}")
+
+            # --- Delete entire rule (soft delete + cascade) ---
+            if not condition_ids and not action_ids:
+                rulemaster.is_active = False
+                rulemaster.save()
+                all_conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+                all_actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+                deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in all_conditions]
+                deleted_actions = [f"{act.id} - {act.action_param}" for act in all_actions]
+                all_conditions.delete()
+                all_actions.delete()
+
+                duration = (time.time() - start_time) * 1000
+                logger.warning(
+                    f"[DELETE] Rule {rule_id} deactivated. All related conditions and actions deleted in {duration:.2f} ms")
+
+                return Response({
+                    "message": f"Rule {rule_id} deactivated. All related conditions and actions deleted.",
+                    "conditions_deleted": deleted_conditions,
+                    "actions_deleted": deleted_actions
+                }, status=status.HTTP_200_OK)
+
+            duration = (time.time() - start_time) * 1000
+            logger.warning(f"[DELETE] Rule {rulemaster.rule_id} - {rulemaster.rule_name} updated. "
+                           f"Deleted conditions: {deleted_conditions}, actions: {deleted_actions}. Duration: {duration:.2f} ms")
+
+            return Response({
+                "message": f"Deleted rule {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                           f"conditions: {deleted_conditions}, actions: {deleted_actions} successfully."
+            }, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[DELETE] Rulemaster not found (rule_id={rule_id}). Duration: {duration:.2f} ms")
+            return Response({"error": "Rulemaster not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[DELETE] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
