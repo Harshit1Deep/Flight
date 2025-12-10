@@ -1,0 +1,488 @@
+class Rules(APIView):
+    # def post(self, request):
+    #     data = request.data
+    #     entity, airport = get_entity_airport(request)
+    #     try:
+    #         rule_id = data.get('rule_id')
+    #         rule_data = data.get("rulemaster", {})
+    #         condition_list = data.get('condition', [])
+    #         action_list = data.get('action', [])
+    #
+    #         if rule_id:
+    #             rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+    #         else:
+    #             department_id = GroundSupportEquipmentTypes.objects.filter(entity=entity, airport=airport,equipment_code=rule_data.get('task_code')).first().department_id
+    #             rulemaster = AutoAllocationRuleMaster.objects.create(
+    #                 rule_name=rule_data.get('rule_name'),
+    #                 applies_to=rule_data.get('applies_to'),
+    #                 task_code=rule_data.get('task_code'),
+    #                 action_type=rule_data.get('action_type'),
+    #                 start_date=rule_data.get('start_date'),
+    #                 end_date=rule_data.get('end_date'),
+    #                 created_by=rule_data.get('created_by'),
+    #                 is_active = True,
+    #                 department_id = department_id,
+    #                 priority=rule_data.get('priority', 1)
+    #             )
+    #
+    #         created_condition = []
+    #         for condition_data in condition_list:
+    #             createcondition = AutoAllocationRuleCondition.objects.create(
+    #                 rule_id=rulemaster,
+    #                 group_id=condition_data.get('group_id', 1),
+    #                 parameter=condition_data.get('parameter'),
+    #                 operator=condition_data.get('operator'),
+    #                 value=condition_data.get('value'),
+    #                 logical_operator=condition_data.get('logical_operator')
+    #             )
+    #             created_condition.append(f"{createcondition.id} - {createcondition.parameter} ")
+    #
+    #         created_action = []
+    #         for action_data in action_list:
+    #             createaction = AutoAllocationRuleAction.objects.create(
+    #                 rule_id=rulemaster,
+    #                 action_param=action_data.get('action_param'),
+    #                 created_by=action_data.get('created_by'),
+    #                 value=action_data.get('value', '')
+    #             )
+    #             created_action.append(f"{createaction.id} - {createaction.action_param}")
+    #
+    #         return Response({
+    #             "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {created_condition} "
+    #                        f"and action: {created_action} successfully."
+    #         }, status=status.HTTP_201_CREATED)
+    #
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    logger = logging.getLogger(__name__)
+
+    def post(self, request):
+        start_time = time.time()  # ⏱ log start
+        data = request.data
+        entity, airport = get_entity_airport(request)
+
+        try:
+            rule_id = data.get('rule_id')
+            rule_data = data.get("rulemaster", {})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            if rule_id:
+                rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+                logger.info(f"[POST] Using existing rule {rule_id}")
+            else:
+                department_id = GroundSupportEquipmentTypes.objects.filter(
+                    entity=entity,
+                    airport=airport,
+                    equipment_code=rule_data.get('task_code')
+                ).first().department_id
+
+                rulemaster = AutoAllocationRuleMaster.objects.create(
+                    rule_name=rule_data.get('rule_name'),
+                    applies_to=rule_data.get('applies_to'),
+                    task_code=rule_data.get('task_code'),
+                    action_type=rule_data.get('action_type'),
+                    start_date=rule_data.get('start_date'),
+                    end_date=rule_data.get('end_date'),
+                    created_by=rule_data.get('created_by'),
+                    is_active=True,
+                    department_id=department_id,
+                    priority=rule_data.get('priority', 1)
+                )
+                logger.info(f"[POST] Created new rule {rulemaster.rule_id} - {rulemaster.rule_name}")
+
+            created_condition = []
+            for condition_data in condition_list:
+                createcondition = AutoAllocationRuleCondition.objects.create(
+                    rule_id=rulemaster,
+                    group_id=condition_data.get('group_id', 1),
+                    parameter=condition_data.get('parameter'),
+                    operator=condition_data.get('operator'),
+                    value=condition_data.get('value'),
+                    logical_operator=condition_data.get('logical_operator')
+                )
+                created_condition.append(f"{createcondition.id} - {createcondition.parameter}")
+
+            created_action = []
+            for action_data in action_list:
+                createaction = AutoAllocationRuleAction.objects.create(
+                    rule_id=rulemaster,
+                    action_param=action_data.get('action_param'),
+                    created_by=action_data.get('created_by'),
+                    value=action_data.get('value', '')
+                )
+                created_action.append(f"{createaction.id} - {createaction.action_param}")
+
+            # ⏱ log end
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[POST] Rule {rulemaster.rule_id} processed in {duration:.2f} ms")
+
+            return Response({
+                "message": f"Created rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                           f"conditions: {created_condition} and actions: {created_action} successfully."
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[POST] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # def patch(self, request):
+    #     data = request.data
+    #     try:
+    #         rule_data = data.get('rulemaster', {})
+    #         condition_list = data.get('condition', [])
+    #         action_list = data.get('action', [])
+    #
+    #         rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+    #
+    #         with transaction.atomic():
+    #
+    #             for field, value in rule_data.items():
+    #                 if field != "rule_id" and hasattr(rulemaster, field):
+    #                     setattr(rulemaster, field, value)
+    #             rulemaster.save()
+    #
+    #             updated_conditions = []
+    #             for condition_data in condition_list:
+    #                 condition_id = condition_data.get('condition_id')
+    #                 if condition_id:
+    #                     condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rulemaster)
+    #                     for field, value in condition_data.items():
+    #                         if field != "condition_id" and hasattr(condition, field):
+    #                             setattr(condition, field, value)
+    #                     condition.save()
+    #                     updated_conditions.append(f"{condition.id} - {condition.parameter}")
+    #
+    #             updated_actions = []
+    #             for action_data in action_list:
+    #                 action_id = action_data.get('action_id')
+    #                 if action_id:
+    #                     action = AutoAllocationRuleAction.objects.get(id=action_id, rule_id=rulemaster)
+    #                     for field, value in action_data.items():
+    #                         if field != "action_id" and hasattr(action, field):
+    #                             setattr(action, field, value)
+    #                     action.save()
+    #                     updated_actions.append(f"{action.id} - {action.action_param} ")
+    #
+    #         return Response({
+    #             "message": f"updated rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {updated_conditions} "
+    #                        f"and action: {updated_actions} successfully."}, status=status.HTTP_200_OK)
+    #
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def patch(self, request):
+        start_time = time.time()
+        data = request.data
+        try:
+            rule_data = data.get("rulemaster", {})
+            condition_list = data.get('condition', [])
+            action_list = data.get('action', [])
+
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_data.get('rule_id'))
+            for field,value in rule_data.items():
+                setattr(rulemaster, field, value)
+            rulemaster.save()
+
+            updated_condition = []
+            for condition_data in condition_list:
+                condition_id = condition_data.get('condition_id')
+                if condition_id:
+                    condition = AutoAllocationRuleCondition.objects.get(id=condition_id, rule_id=rulemaster)
+                    for field, value in condition_data.items():
+                        if field != "condition_id" and hasattr(condition, field):
+                             setattr(condition, field, value)
+                    condition.save()
+                    updated_condition.append(f"{condition.id} - {condition.parameter}")
+
+            updated_action = []
+            for action_data in action_list:
+                action_id = action_data.get('action_id')
+                if action_id:
+                    action = AutoAllocationRuleAction.objects.get(id=action_id,rule_id=rulemaster)
+                    for field,value in action_data.items():
+                        if field != 'action_id' and hasattr(action, field):
+                            setattr(action, field, value)
+                    action.save()
+                    updated_action.append(f"{action.id} - {action.action_param}")
+            duration = (time.time() - start_time) * 1000
+            logger.info(f"[PATCH] Rule {rulemaster.rule_id} updated in {duration:.2f} ms")
+            return Response({"message":f"Updated rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                             f"conditions: {updated_condition} and actions: {updated_action} successfully."},
+                            status=status.HTTP_200_OK)
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[PATCH] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    # def get(self, request):
+    #     rule_id = request.query_params.get('rule_id')
+    #     entity, airport = get_entity_airport(request)
+    #     if not entity or not airport:
+    #         return Response({"error": "User entity or airport not found"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #     try:
+    #         rulemasters = AutoAllocationRuleMaster.objects.filter(is_active=True).prefetch_related('conditions', 'actions')
+    #         if rule_id:
+    #             rulemasters = rulemasters.filter(rule_id=rule_id)
+    #         data_rows = []
+    #         for rulemaster in rulemasters:
+    #             rule_data = {
+    #                 "rule_id": rulemaster.rule_id,
+    #                 "rule_name": rulemaster.rule_name,
+    #                 "applies_to": rulemaster.applies_to,
+    #                 "task_code": rulemaster.task_code,
+    #                 "action_type": rulemaster.action_type,
+    #                 "start_date": rulemaster.start_date,
+    #                 "end_date": rulemaster.end_date,
+    #                 "created_by": rulemaster.created_by,
+    #                 "updated_by": rulemaster.updated_by,
+    #                 "department_id": rulemaster.department_id,
+    #                 "priority": rulemaster.priority,
+    #             }
+    #
+    #             conditions_data = [
+    #                 {
+    #                     "group_id": condition.group_id,
+    #                     "parameter": condition.parameter,
+    #                     "operator": condition.operator,
+    #                     "value": condition.value,
+    #                     "logical_operator": condition.logical_operator
+    #                 }
+    #                 for condition in rulemaster.conditions.all()
+    #             ]
+    #             actions_data = [
+    #                 {
+    #                     "action_param": action.action_param,
+    #                     "created_by": action.created_by,
+    #                     "updated_by": getattr(action, 'updated_by', None),
+    #                     "value": action.value
+    #                 }
+    #                 for action in rulemaster.actions.all()
+    #             ]
+    #             data_rows.append([rule_data, conditions_data, actions_data])
+    #
+    #         config_data = EntityAirports.objects.filter(entity=entity, airport=airport).values_list('config',flat=True).first()
+    #         metadeta = json.loads(config_data) if config_data else {}
+    #         rule_json = metadeta.get("rule_config", {})
+    #         result = {
+    #             "columns": ["Rules", "Conditions", "Actions"],
+    #             "data": data_rows,
+    #             "meta": rule_json
+    #         }
+    #         return Response(result, status=status.HTTP_200_OK)
+    #
+    #     except AutoAllocationRuleMaster.DoesNotExist:
+    #         return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request):
+        start_time = time.time()
+        rule_id = request.query_params.get('rule_id')
+        entity, airport = get_entity_airport(request)
+
+        if not entity or not airport:
+            duration = (time.time() - start_time) * 1000
+            logger.warning(f"[GET] Missing entity/airport. Duration: {duration:.2f} ms")
+            return Response({"error": "User entity or airport not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rulemasters = AutoAllocationRuleMaster.objects.filter(is_active=True).prefetch_related('conditions',
+                                                                                                   'actions')
+            if rule_id:
+                rulemasters = rulemasters.filter(rule_id=rule_id)
+
+            data_rows = []
+            for rulemaster in rulemasters:
+                rule_data = {
+                    "rule_id": rulemaster.rule_id,
+                    "rule_name": rulemaster.rule_name,
+                    "applies_to": rulemaster.applies_to,
+                    "task_code": rulemaster.task_code,
+                    "action_type": rulemaster.action_type,
+                    "start_date": rulemaster.start_date,
+                    "end_date": rulemaster.end_date,
+                    "created_by": rulemaster.created_by,
+                    "updated_by": rulemaster.updated_by,
+                    "department_id": rulemaster.department_id,
+                    "priority": rulemaster.priority,
+                }
+
+                conditions_data = [
+                    {
+                        "group_id": condition.group_id,
+                        "parameter": condition.parameter,
+                        "operator": condition.operator,
+                        "value": condition.value,
+                        "logical_operator": condition.logical_operator
+                    }
+                    for condition in rulemaster.conditions.all()
+                ]
+
+                actions_data = [
+                    {
+                        "action_param": action.action_param,
+                        "created_by": action.created_by,
+                        "updated_by": getattr(action, 'updated_by', None),
+                        "value": action.value
+                    }
+                    for action in rulemaster.actions.all()
+                ]
+
+                data_rows.append([rule_data, conditions_data, actions_data])
+
+            config_data = EntityAirports.objects.filter(entity=entity, airport=airport).values_list('config',
+                                                                                                    flat=True).first()
+            metadeta = json.loads(config_data) if config_data else {}
+            rule_json = metadeta.get("rule_config", {})
+
+            result = {
+                "columns": ["Rules", "Conditions", "Actions"],
+                "data": data_rows,
+                "meta": rule_json
+            }
+
+            duration = (time.time() - start_time) * 1000
+            count = len(data_rows)
+            msg = f"[GET] {'Single rule' if rule_id else 'Active rules'} fetched: {count} row(s) in {duration:.2f} ms"
+            if rule_id:
+                msg += f" (rule_id={rule_id})"
+            logger.warning(msg)
+
+            return Response(result, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[GET] Rule not found (rule_id={rule_id}). Duration: {duration:.2f} ms")
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[GET] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # def delete(self, request):
+    #     data = request.data
+    #     try:
+    #         rule_id = data.get('rule_id')
+    #         condition_ids = data.get('condition_id')
+    #         action_ids = data.get('action_id')
+    #
+    #         if not rule_id:
+    #             return Response({"error": "Missing rule_id"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #         rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+    #
+    #         deleted_conditions = []
+    #         deleted_actions = []
+    #
+    #         if condition_ids:
+    #             conditions = AutoAllocationRuleCondition.objects.filter(id__in=condition_ids, rule_id=rule_id)
+    #             deleted_conditions = [f"{cond.id} - {cond.parameter} " for cond in conditions]
+    #             conditions.delete()
+    #
+    #         if action_ids:
+    #             actions = AutoAllocationRuleAction.objects.filter(id__in=action_ids, rule_id=rule_id)
+    #             deleted_actions = [f"{act.id} - {act.action_param}" for act in actions]
+    #             actions.delete()
+    #
+    #         if not condition_ids and not action_ids:
+    #             rulemaster.is_active = False
+    #             rulemaster.save()
+    #             all_conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+    #             all_actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+    #             deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in all_conditions]
+    #             deleted_actions = [f"{act.id} - {act.action_param}" for act in all_actions]
+    #             all_conditions.delete()
+    #             all_actions.delete()
+    #             return Response({
+    #                 "message": f"rules -  {rule_id} deactivated. All related conditions and actions deleted.",
+    #                 "conditions_deleted": deleted_conditions,
+    #                 "actions_deleted": deleted_actions
+    #             }, status=status.HTTP_200_OK)
+    #
+    #         return Response({"message":f"deleted rules: {rulemaster.rule_id} - {rulemaster.rule_name}, "
+    #                        f"conditions: {deleted_conditions} "
+    #                        f"and action: {deleted_actions} successfully." }, status=status.HTTP_200_OK)
+    #
+    #     except AutoAllocationRuleMaster.DoesNotExist:
+    #         return Response({"error": "Rulemaster not found"}, status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request):
+        start_time = time.time()
+        data = request.data
+        try:
+            rule_id = data.get('rule_id')
+            condition_ids = data.get('condition_id')
+            action_ids = data.get('action_id')
+
+            if not rule_id:
+                duration = (time.time() - start_time) * 1000
+                logger.warning(f"[DELETE] Missing rule_id in request. Duration: {duration:.2f} ms")
+                return Response({"error": "Missing rule_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+            rulemaster = AutoAllocationRuleMaster.objects.get(rule_id=rule_id)
+
+            deleted_conditions = []
+            deleted_actions = []
+
+            # --- Delete specific conditions ---
+            if condition_ids:
+                conditions = AutoAllocationRuleCondition.objects.filter(id__in=condition_ids, rule_id=rule_id)
+                deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in conditions]
+                conditions.delete()
+                logger.warning(f"[DELETE] Rule {rule_id}: deleted conditions {deleted_conditions}")
+
+            # --- Delete specific actions ---
+            if action_ids:
+                actions = AutoAllocationRuleAction.objects.filter(id__in=action_ids, rule_id=rule_id)
+                deleted_actions = [f"{act.id} - {act.action_param}" for act in actions]
+                actions.delete()
+                logger.warning(f"[DELETE] Rule {rule_id}: deleted actions {deleted_actions}")
+
+            # --- Delete entire rule (soft delete + cascade) ---
+            if not condition_ids and not action_ids:
+                rulemaster.is_active = False
+                rulemaster.save()
+                all_conditions = AutoAllocationRuleCondition.objects.filter(rule_id=rulemaster)
+                all_actions = AutoAllocationRuleAction.objects.filter(rule_id=rulemaster)
+                deleted_conditions = [f"{cond.id} - {cond.parameter}" for cond in all_conditions]
+                deleted_actions = [f"{act.id} - {act.action_param}" for act in all_actions]
+                all_conditions.delete()
+                all_actions.delete()
+
+                duration = (time.time() - start_time) * 1000
+                logger.warning(
+                    f"[DELETE] Rule {rule_id} deactivated. All related conditions and actions deleted in {duration:.2f} ms")
+
+                return Response({
+                    "message": f"Rule {rule_id} deactivated. All related conditions and actions deleted.",
+                    "conditions_deleted": deleted_conditions,
+                    "actions_deleted": deleted_actions
+                }, status=status.HTTP_200_OK)
+
+            duration = (time.time() - start_time) * 1000
+            logger.warning(f"[DELETE] Rule {rulemaster.rule_id} - {rulemaster.rule_name} updated. "
+                           f"Deleted conditions: {deleted_conditions}, actions: {deleted_actions}. Duration: {duration:.2f} ms")
+
+            return Response({
+                "message": f"Deleted rule {rulemaster.rule_id} - {rulemaster.rule_name}, "
+                           f"conditions: {deleted_conditions}, actions: {deleted_actions} successfully."
+            }, status=status.HTTP_200_OK)
+
+        except AutoAllocationRuleMaster.DoesNotExist:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[DELETE] Rulemaster not found (rule_id={rule_id}). Duration: {duration:.2f} ms")
+            return Response({"error": "Rulemaster not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+            logger.error(f"[DELETE] Error after {duration:.2f} ms: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
